@@ -1,0 +1,75 @@
+# ================================================
+# EduSurvival Arena — Docker Compose
+# 24,000+ foydalanuvchi uchun production setup
+# ================================================
+
+version: "3.9"
+
+services:
+
+  # ─── ASOSIY ILOVA ──────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: edusurvival_app
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # SSL sertifikatlar (Let's Encrypt)
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - certbot_webroot:/var/www/certbot
+      # Nginx loglar
+      - nginx_logs:/var/log/nginx
+    environment:
+      - TZ=Asia/Tashkent
+    networks:
+      - edusurvival_net
+    # 24k foydalanuvchi uchun resurs limitlari
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 2G
+        reservations:
+          cpus: "1.0"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/index.html"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ─── SSL SERTIFIKAT (Let's Encrypt) ────────────────────────────────────
+  certbot:
+    image: certbot/certbot:latest
+    container_name: edusurvival_certbot
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt
+      - certbot_webroot:/var/www/certbot
+    # 12 soatda bir marta yangilash tekshiruvi
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot; sleep 12h & wait $${!}; done;'"
+    networks:
+      - edusurvival_net
+
+# ─── VOLUMES ───────────────────────────────────────────────────────────────
+volumes:
+  certbot_webroot:
+  nginx_logs:
+
+# ─── NETWORK ───────────────────────────────────────────────────────────────
+networks:
+  edusurvival_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
