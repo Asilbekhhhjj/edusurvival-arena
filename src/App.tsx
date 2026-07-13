@@ -24,6 +24,15 @@ export default function App() {
     return () => unsub();
   }, []);
 
+  // After local (localStorage) state is ready, always pull the latest data
+  // from Supabase so every device/browser shows the same, up-to-date data
+  // instead of relying only on locally cached state.
+  useEffect(() => {
+    if (hydrated) {
+      useStore.getState().initializeRealtimeSync();
+    }
+  }, [hydrated]);
+
   // Reset page when user changes
   useEffect(() => { setPage("overview"); }, [user?.id]);
 
