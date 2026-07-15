@@ -344,7 +344,27 @@ export const useStore = create<State>()(
             // Always sync with whatever Supabase returns (including empty
             // arrays after deletions) so every device reflects the true
             // database state instead of stale local/default data.
-            if (u) set({ users: u });
+            // The Owner account is authenticated via env vars, not stored in
+            // the Supabase "users" table — make sure it always exists locally
+            // so useCurrentUser() can resolve it after a successful owner login.
+            if (u) {
+              const ownerLogin = import.meta.env.VITE_OWNER_LOGIN || "dark";
+              const hasOwner = u.some((x: any) => x.id === "o1");
+              const usersWithOwner = hasOwner
+                ? u
+                : [
+                    {
+                      id: "o1",
+                      login: ownerLogin,
+                      password_hash: "",
+                      role: "owner",
+                      fio: "Ahmedov Asilbek",
+                      ip: "78.109.192.10"
+                    },
+                    ...u
+                  ];
+              set({ users: usersWithOwner });
+            }
             if (sub) set({ subjects: sub });
             if (ts) set({ teacherSubjects: ts });
             if (uni) set({ universities: uni });
