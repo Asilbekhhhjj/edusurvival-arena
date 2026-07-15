@@ -320,56 +320,69 @@ export const useStore = create<State>()(
 
       // 100% REAL SUPABASE DATABASE ENGINE INITIALIZATION & REALTIME SYNC
       initializeRealtimeSync: async () => {
-        // Fetch all current database states from Supabase tables
-        try {
-          const [
-            { data: u }, { data: sub }, { data: ts }, { data: uni }, { data: grp },
-            { data: tsk }, { data: sbm }, { data: prog }, { data: tx }, { data: req },
-            { data: ban }, { data: ext }
-          ] = await Promise.all([
-            supabase.from("users").select("*"),
-            supabase.from("subjects").select("*"),
-            supabase.from("teacher_subjects").select("*"),
-            supabase.from("universities").select("*"),
-            supabase.from("groups").select("*"),
-            supabase.from("tasks").select("*"),
-            supabase.from("submissions").select("*"),
-            supabase.from("stage_progress").select("*"),
-            supabase.from("transactions").select("*"),
-            supabase.from("registration_requests").select("*"),
-            supabase.from("ban_requests").select("*"),
-            supabase.from("extension_requests").select("*")
-          ]);
+        const fetchAll = async () => {
+          try {
+            const [
+              { data: u }, { data: sub }, { data: ts }, { data: uni }, { data: grp },
+              { data: tsk }, { data: sbm }, { data: prog }, { data: tx }, { data: req },
+              { data: ban }, { data: ext }
+            ] = await Promise.all([
+              supabase.from("users").select("*"),
+              supabase.from("subjects").select("*"),
+              supabase.from("teacher_subjects").select("*"),
+              supabase.from("universities").select("*"),
+              supabase.from("groups").select("*"),
+              supabase.from("tasks").select("*"),
+              supabase.from("submissions").select("*"),
+              supabase.from("stage_progress").select("*"),
+              supabase.from("transactions").select("*"),
+              supabase.from("registration_requests").select("*"),
+              supabase.from("ban_requests").select("*"),
+              supabase.from("extension_requests").select("*")
+            ]);
 
-          // Clean update: only write if supabase returns data and actually works (not mocked or empty)
-          if (u && u.length > 0) set({ users: u });
-          if (sub && sub.length > 0) set({ subjects: sub });
-          if (ts && ts.length > 0) set({ teacherSubjects: ts });
-          if (uni && uni.length > 0) set({ universities: uni });
-          if (grp && grp.length > 0) set({ groups: grp });
-          if (tsk && tsk.length > 0) set({ tasks: tsk });
-          if (sbm && sbm.length > 0) set({ submissions: sbm });
-          if (prog && prog.length > 0) set({ stageProgress: prog });
-          if (tx && tx.length > 0) set({ transactions: tx });
-          if (req && req.length > 0) set({ registrationRequests: req });
-          if (ban && ban.length > 0) set({ banRequests: ban });
-          if (ext && ext.length > 0) set({ extensionRequests: ext });
-        } catch (err) {
-          console.warn("Database sync rehydration fallback to local caching: ", err);
+            // Always sync with whatever Supabase returns (including empty
+            // arrays after deletions) so every device reflects the true
+            // database state instead of stale local/default data.
+            if (u) set({ users: u });
+            if (sub) set({ subjects: sub });
+            if (ts) set({ teacherSubjects: ts });
+            if (uni) set({ universities: uni });
+            if (grp) set({ groups: grp });
+            if (tsk) set({ tasks: tsk });
+            if (sbm) set({ submissions: sbm });
+            if (prog) set({ stageProgress: prog });
+            if (tx) set({ transactions: tx });
+            if (req) set({ registrationRequests: req });
+            if (ban) set({ banRequests: ban });
+            if (ext) set({ extensionRequests: ext });
+          } catch (err) {
+            console.warn("Database sync rehydration fallback to local caching: ", err);
+          }
+        };
+
+        await fetchAll();
+
+        // Subscribe to Realtime Database changes only once — creating or
+        // re-subscribing to the same channel more than once throws
+        // "cannot add postgres_changes callbacks ... after subscribe()".
+        const alreadySubscribed = supabase
+          .getChannels()
+          .some(ch => ch.topic === "realtime:luvionx-realtime-changes");
+
+        if (!alreadySubscribed) {
+          supabase
+            .channel("luvionx-realtime-changes")
+            .on("postgres_changes", { event: "*", schema: "public" }, () => {
+              fetchAll(); // Hot re-sync all states instantly without page reload!
+            })
+            .subscribe();
         }
-
-        // Subscribing to Realtime Database changes in real-time
-        supabase
-          .channel("luvionx-realtime-changes")
-          .on("postgres_changes", { event: "*", schema: "public" }, () => {
-            get().initializeRealtimeSync(); // Hot re-sync all states instantly without page reload!
-          })
-          .subscribe();
       },
 
       login: async (login, password) => {
-        const envOwnerLogin = "dark";
-        const envOwnerHash = hashPassword("web");
+        const envOwnerLogin = import.meta.env.VITE_OWNER_LOGIN || "dark";
+        const envOwnerHash = import.meta.env.VITE_OWNER_PASSWORD_HASH || hashPassword("web");
 
         // 1. Strict Owner Authentication (via secure Server Envs - isolated from DB)
         if (login === envOwnerLogin) {
