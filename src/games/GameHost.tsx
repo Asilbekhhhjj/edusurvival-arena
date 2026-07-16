@@ -4,6 +4,7 @@ import { GAME_MODE_META } from "./gameData";
 import { Button, Badge } from "../components/UI";
 import { cn } from "../utils/cn";
 import { useStore, useCurrentUser } from "../store";
+import { supabase } from "../supabaseClient";
 import { useCheatDetector } from "../hooks/useCheatDetector";
 
 interface GameProps {
@@ -43,17 +44,27 @@ export function GameHost({ stage, subjectId, task, onClose }: { stage: Stage; su
 
   // Spend booster in state and sync with store wallet/user
   const spendBooster = (type: "life" | "shield" | "time") => {
+    let newLives = user.lives || 3;
+    let newShields = user.shields || 0;
+    let newTimeFreezes = user.timeFreezes || 0;
+    if (type === "life") newLives = Math.max(0, newLives - 1);
+    if (type === "shield") newShields = Math.max(0, newShields - 1);
+    if (type === "time") newTimeFreezes = Math.max(0, newTimeFreezes - 1);
+
     useStore.setState(s => ({
       users: s.users.map(u => {
         if (u.id !== user.id) return u;
-        return {
-          ...u,
-          lives: type === "life" ? Math.max(0, (u.lives || 3) - 1) : u.lives,
-          shields: type === "shield" ? Math.max(0, (u.shields || 0) - 1) : u.shields,
-          timeFreezes: type === "time" ? Math.max(0, (u.timeFreezes || 0) - 1) : u.timeFreezes,
-        };
+        return { ...u, lives: newLives, shields: newShields, timeFreezes: newTimeFreezes };
       })
     }));
+
+    // Persist the consumption so it survives realtime resync / other devices.
+    supabase.from("users").update({
+      lives: newLives,
+      shields: newShields,
+      time_freezes: newTimeFreezes,
+    }).eq("id", user.id).then(() => {}, () => {});
+
     if (type === "life") setUserLives(v => Math.max(0, v - 1));
     if (type === "shield") setUserShields(v => Math.max(0, v - 1));
     if (type === "time") {

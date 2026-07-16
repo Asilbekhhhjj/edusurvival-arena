@@ -13,6 +13,27 @@ export function hashPassword(password: string): string {
   return btoa("LUVIONX_SALT_" + password);
 }
 
+// Supabase jadval ustunlari snake_case (masalan amount_paid), lekin ilova
+// kod ichida camelCase (masalan amountPaid) kutadi. Bu funksiya Supabase'dan
+// kelgan har bir qatorni ilova kutadigan formatga aylantiradi.
+// "password_hash" maydoni bundan mustasno — u ataylab snake_case holida qoladi.
+function snakeToCamelRow(row: any): any {
+  if (row === null || typeof row !== "object") return row;
+  const out: any = {};
+  for (const key of Object.keys(row)) {
+    const newKey =
+      key === "password_hash"
+        ? key
+        : key.replace(/_([a-z0-9])/g, (_m, c) => c.toUpperCase());
+    out[newKey] = row[key];
+  }
+  return out;
+}
+function snakeToCamel(rows: any[] | null): any[] | null {
+  if (!rows) return rows;
+  return rows.map(snakeToCamelRow);
+}
+
 function futureISO(daysFromNow: number) {
   const d = new Date();
   d.setDate(d.getDate() + daysFromNow);
@@ -323,9 +344,9 @@ export const useStore = create<State>()(
         const fetchAll = async () => {
           try {
             const [
-              { data: u }, { data: sub }, { data: ts }, { data: uni }, { data: grp },
-              { data: tsk }, { data: sbm }, { data: prog }, { data: tx }, { data: req },
-              { data: ban }, { data: ext }
+              { data: uRaw }, { data: subRaw }, { data: tsRaw }, { data: uniRaw }, { data: grpRaw },
+              { data: tskRaw }, { data: sbmRaw }, { data: progRaw }, { data: txRaw }, { data: reqRaw },
+              { data: banRaw }, { data: extRaw }
             ] = await Promise.all([
               supabase.from("users").select("*"),
               supabase.from("subjects").select("*"),
@@ -344,6 +365,19 @@ export const useStore = create<State>()(
             // Always sync with whatever Supabase returns (including empty
             // arrays after deletions) so every device reflects the true
             // database state instead of stale local/default data.
+            const u = snakeToCamel(uRaw);
+            const sub = snakeToCamel(subRaw);
+            const ts = snakeToCamel(tsRaw);
+            const uni = snakeToCamel(uniRaw);
+            const grp = snakeToCamel(grpRaw);
+            const tsk = snakeToCamel(tskRaw);
+            const sbm = snakeToCamel(sbmRaw);
+            const prog = snakeToCamel(progRaw);
+            const tx = snakeToCamel(txRaw);
+            const req = snakeToCamel(reqRaw);
+            const ban = snakeToCamel(banRaw);
+            const ext = snakeToCamel(extRaw);
+
             // The Owner account is authenticated via env vars, not stored in
             // the Supabase "users" table — make sure it always exists locally
             // so useCurrentUser() can resolve it after a successful owner login.
@@ -712,24 +746,34 @@ export const useStore = create<State>()(
           item_purchased: item.name
         });
 
+        const currentInventory = [...(user.inventory || [])];
+        if (item.id === "neon_skin") currentInventory.push("neon_cyan");
+        if (item.id === "gold_nick") currentInventory.push("golden_fire");
+        const updatedFields = {
+          inventory: currentInventory,
+          lives: item.id === "life" ? Math.min(5, (user.lives || 3) + 1) : user.lives,
+          shields: item.id === "shield" ? (user.shields || 0) + 1 : user.shields,
+          timeFreezes: item.id === "time" ? (user.timeFreezes || 0) + 1 : user.timeFreezes,
+          streakFreezes: item.id === "streak" ? (user.streakFreezes || 0) + 1 : user.streakFreezes,
+          activeSkin: item.id === "neon_skin" ? "neon_cyan" : user.activeSkin,
+          activeBorder: item.id === "gold_nick" ? "golden_fire" : user.activeBorder,
+        };
+
+        // Persist the purchase effect to Supabase so it survives realtime
+        // resync and is visible on every device — not just this session.
+        await supabase.from("users").update({
+          inventory: updatedFields.inventory,
+          lives: updatedFields.lives,
+          shields: updatedFields.shields,
+          time_freezes: updatedFields.timeFreezes,
+          streak_freezes: updatedFields.streakFreezes,
+          active_skin: updatedFields.activeSkin,
+          active_border: updatedFields.activeBorder,
+        }).eq("id", userId);
+
         set(s => ({
           transactions: [newTx, ...s.transactions],
-          users: s.users.map(u => {
-            if (u.id !== userId) return u;
-            const currentInventory = u.inventory || [];
-            if (item.id === "neon_skin") currentInventory.push("neon_cyan");
-            if (item.id === "gold_nick") currentInventory.push("golden_fire");
-            return {
-              ...u,
-              inventory: currentInventory,
-              lives: item.id === "life" ? Math.min(5, (u.lives || 3) + 1) : u.lives,
-              shields: item.id === "shield" ? (u.shields || 0) + 1 : u.shields,
-              timeFreezes: item.id === "time" ? (u.timeFreezes || 0) + 1 : u.timeFreezes,
-              streakFreezes: item.id === "streak" ? (u.streakFreezes || 0) + 1 : u.streakFreezes,
-              activeSkin: item.id === "neon_skin" ? "neon_cyan" : u.activeSkin,
-              activeBorder: item.id === "gold_nick" ? "golden_fire" : u.activeBorder,
-            };
-          })
+          users: s.users.map(u => u.id === userId ? { ...u, ...updatedFields } : u)
         }));
         return { ok: true };
       },
@@ -782,25 +826,42 @@ export const useStore = create<State>()(
 
         await supabase.from("transactions").update({ status: "completed" }).eq("id", txId);
 
-        set(s => ({
-          transactions: s.transactions.map(t => t.id === txId ? { ...t, status: "completed" as const } : t),
-          users: s.users.map(u => {
-            if (u.id !== tx.studentId) return u;
-            const currentInventory = u.inventory || [];
-            if (tx.itemId === "neon_skin") currentInventory.push("neon_cyan");
-            if (tx.itemId === "gold_nick") currentInventory.push("golden_fire");
-            return {
-              ...u,
-              inventory: currentInventory,
-              lives: tx.itemId === "life" ? Math.min(5, (u.lives || 3) + 1) : u.lives,
-              shields: tx.itemId === "shield" ? (u.shields || 0) + 1 : u.shields,
-              timeFreezes: tx.itemId === "time" ? (u.timeFreezes || 0) + 1 : u.timeFreezes,
-              streakFreezes: tx.itemId === "streak" ? (u.streakFreezes || 0) + 1 : u.streakFreezes,
-              activeSkin: tx.itemId === "neon_skin" ? "neon_cyan" : u.activeSkin,
-              activeBorder: tx.itemId === "gold_nick" ? "golden_fire" : u.activeBorder,
-            };
-          })
-        }));
+        const student = state.users.find(u => u.id === tx.studentId);
+        if (student) {
+          const currentInventory = [...(student.inventory || [])];
+          if (tx.itemId === "neon_skin") currentInventory.push("neon_cyan");
+          if (tx.itemId === "gold_nick") currentInventory.push("golden_fire");
+          const updatedFields = {
+            inventory: currentInventory,
+            lives: tx.itemId === "life" ? Math.min(5, (student.lives || 3) + 1) : student.lives,
+            shields: tx.itemId === "shield" ? (student.shields || 0) + 1 : student.shields,
+            timeFreezes: tx.itemId === "time" ? (student.timeFreezes || 0) + 1 : student.timeFreezes,
+            streakFreezes: tx.itemId === "streak" ? (student.streakFreezes || 0) + 1 : student.streakFreezes,
+            activeSkin: tx.itemId === "neon_skin" ? "neon_cyan" : student.activeSkin,
+            activeBorder: tx.itemId === "gold_nick" ? "golden_fire" : student.activeBorder,
+          };
+
+          // Persist to Supabase so the boost survives realtime resync and
+          // shows up correctly on the student's own device too.
+          await supabase.from("users").update({
+            inventory: updatedFields.inventory,
+            lives: updatedFields.lives,
+            shields: updatedFields.shields,
+            time_freezes: updatedFields.timeFreezes,
+            streak_freezes: updatedFields.streakFreezes,
+            active_skin: updatedFields.activeSkin,
+            active_border: updatedFields.activeBorder,
+          }).eq("id", tx.studentId);
+
+          set(s => ({
+            transactions: s.transactions.map(t => t.id === txId ? { ...t, status: "completed" as const } : t),
+            users: s.users.map(u => u.id === tx.studentId ? { ...u, ...updatedFields } : u)
+          }));
+        } else {
+          set(s => ({
+            transactions: s.transactions.map(t => t.id === txId ? { ...t, status: "completed" as const } : t),
+          }));
+        }
 
         get().log("PAY", `P2P Xarid TASDIQLANDI (Approve): ${tx.itemPurchased} -> ${tx.studentName}`);
         get().toast({ title: "✓ Xarid Tasdiqlandi!", desc: tx.itemPurchased, tone: "success" });
