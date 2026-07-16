@@ -24,6 +24,8 @@ function snakeToCamelRow(row: any): any {
     const newKey =
       key === "password_hash"
         ? key
+        : key === "originality_pct"
+        ? "originality"
         : key.replace(/_([a-z0-9])/g, (_m, c) => c.toUpperCase());
     out[newKey] = row[key];
   }
@@ -683,10 +685,21 @@ export const useStore = create<State>()(
       },
 
       useExtraAttempt: async (studentId, subjectId, stageId) => {
+        const state = get();
+        const p0 = state.stageProgress.find(p => p.studentId === studentId && p.subjectId === subjectId && p.stageId === stageId);
+        const newAttemptsLeft = (p0?.attemptsLeft || 0) + 1;
+        const newExtraAttempts = (p0?.extraAttempts || 0) + 1;
+        await supabase.from("stage_progress").upsert({
+          student_id: studentId,
+          subject_id: subjectId,
+          stage_id: stageId,
+          attempts_left: newAttemptsLeft,
+          extra_attempts: newExtraAttempts
+        });
         set(s => ({
           stageProgress: s.stageProgress.map(p =>
             p.studentId === studentId && p.subjectId === subjectId && p.stageId === stageId
-              ? { ...p, attemptsLeft: p.attemptsLeft + 1, extraAttempts: p.extraAttempts + 1 } : p),
+              ? { ...p, attemptsLeft: newAttemptsLeft, extraAttempts: newExtraAttempts } : p),
         }));
       },
 
@@ -1013,13 +1026,18 @@ export const useStore = create<State>()(
 
         try {
           await supabase
-            .from("student_tasks")
-            .insert({
-              student_id: studentId,
+            .from("submissions")
+            .upsert({
+              id: sub.id,
               task_id: taskId,
-              earned_score: earned,
-              status: sub.status,
-              completed_at: new Date().toISOString()
+              student_id: studentId,
+              content: sub.content,
+              submitted_at: new Date(sub.submittedAt).toISOString(),
+              originality_pct: sub.originality,
+              teacher_score: sub.teacherMark,
+              teacher_comment: sub.comment,
+              final_score: sub.earnedScore,
+              status: sub.status
             });
         } catch (err) {
           console.warn("Offline fallback triggered: ", err);
@@ -1029,12 +1047,19 @@ export const useStore = create<State>()(
         const isNight = currentHour >= 0 && currentHour < 5;
         const isPerfect = won && timeSpent < 20;
 
+        const currentTotal = state.users.find(u => u.id === studentId)?.totalScore || 0;
+        const delta0 = existingSubIndex >= 0 ? earned - (state.submissions[existingSubIndex].earnedScore || 0) : earned;
+        const newTotalScore = Math.max(0, Math.min(50, currentTotal + delta0));
+        try {
+          await supabase.from("users").update({ total_score: newTotalScore }).eq("id", studentId);
+        } catch (err) {
+          console.warn("Offline fallback triggered: ", err);
+        }
+
         if (existingSubIndex >= 0) {
-          const oldScore = state.submissions[existingSubIndex].earnedScore || 0;
-          const delta = earned - oldScore;
           set(s => ({
             submissions: s.submissions.map((x, i) => i === existingSubIndex ? sub : x),
-            users: s.users.map(u => u.id === studentId ? { ...u, totalScore: Math.max(0, Math.min(50, (u.totalScore || 0) + delta)) } : u),
+            users: s.users.map(u => u.id === studentId ? { ...u, totalScore: newTotalScore } : u),
             achievements: s.achievements.map(a => {
               if (a.id === "ach3" && isNight && !a.unlockedAt) {
                 get().toast({ title: "🦉 Yutuq ochildi: Night Owl!", desc: "Tungi mustaqil ish daho'si!", tone: "success" });
@@ -1050,7 +1075,7 @@ export const useStore = create<State>()(
         } else {
           set(s => ({
             submissions: [...s.submissions, sub],
-            users: s.users.map(u => u.id === studentId ? { ...u, totalScore: Math.max(0, Math.min(50, (u.totalScore || 0) + earned)) } : u),
+            users: s.users.map(u => u.id === studentId ? { ...u, totalScore: newTotalScore } : u),
             achievements: s.achievements.map(a => {
               if (a.id === "ach3" && isNight && !a.unlockedAt) {
                 get().toast({ title: "🦉 Yutuq ochildi: Night Owl!", desc: "Tungi mustaqil ish daho'si!", tone: "success" });
