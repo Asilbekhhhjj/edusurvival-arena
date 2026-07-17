@@ -501,14 +501,20 @@ function StageModal({ stage, subjectId, onClose }: { stage: Stage; subjectId: st
   const meta = GAME_MODE_META[stage.mode];
 
   const unfreezeStage = useStore(s => s.unfreezeStage);
-  const buyItem = useStore(s => s.buyItem);
+  const submitP2PTx = useStore(s => s.submitP2PTransaction);
   const toast = useStore(s => s.toast);
+  const [showReceiptForm, setShowReceiptForm] = useState(false);
+  const [senderName, setSenderName] = useState("");
+  const [receiptBase64, setReceiptBase64] = useState("");
 
   const doUnfreeze = async () => {
-    const r = await buyItem(user.id, "unfreeze");
-    if (!r.ok) { toast({ title: r.msg || "Xato", tone: "error" }); return; }
-    await unfreezeStage(user.id, subjectId, stage.id);
-    toast({ title: "🔓 Bosqich ochildi!", tone: "success" });
+    if (!senderName || !receiptBase64) {
+      toast({ title: "Xato", desc: "Iltimos, yuboruvchi ismini va chek rasmini yuklang", tone: "error" });
+      return;
+    }
+    await submitP2PTx(user.id, "unfreeze", 15000, senderName, receiptBase64, subjectId, stage.id);
+    setShowReceiptForm(false);
+    toast({ title: "⏳ Kvitansiya yuborildi", desc: "Tizim egasi tez orada tasdiqlaydi", tone: "info" });
   };
 
   if (playing) {
@@ -525,7 +531,37 @@ function StageModal({ stage, subjectId, onClose }: { stage: Stage; subjectId: st
             <div className="text-white/60 mt-2">Bosqich #{stage.id} — {stage.reward} tanga olindi</div>
           </div>
         ) : isFrozen ? (
-          <FrozenView stage={stage} progress={progress!} onUnfreeze={doUnfreeze} walletBalance={user.wallet || 0} />
+          showReceiptForm ? (
+            <div className="space-y-3">
+              <div className="font-display font-bold text-lg text-sky-200">⚡ Tezkor ochish — 15 000 so'm</div>
+              <div className="text-xs text-white/60">Kartaga (4073 4200 6040 4187) 15 000 so'm o'tkazing, so'ng chekni yuklang.</div>
+              <input
+                type="text"
+                placeholder="Kartadagi ism (yuboruvchi)"
+                value={senderName}
+                onChange={e => setSenderName(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white"
+              />
+              <input
+                type="file"
+                accept="image/*"
+                onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onloadend = () => setReceiptBase64(reader.result as string);
+                  reader.readAsDataURL(file);
+                }}
+                className="w-full text-xs text-white/70"
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <Button tone="secondary" className="w-full" onClick={() => setShowReceiptForm(false)}>Bekor qilish</Button>
+                <Button tone="primary" className="w-full" onClick={doUnfreeze}>Yuborish</Button>
+              </div>
+            </div>
+          ) : (
+            <FrozenView stage={stage} progress={progress!} onUnfreeze={() => setShowReceiptForm(true)} walletBalance={user.wallet || 0} />
+          )
         ) : (
           <div>
             <div className={cn("p-6 rounded-xl bg-gradient-to-br mb-4 scanline relative", meta.color)}>

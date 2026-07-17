@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Shell } from "./components/Shell";
 import { OwnerView } from "./views/OwnerView";
 import { TeacherView } from "./views/TeacherView";
@@ -11,6 +11,9 @@ export default function App() {
   const user = useCurrentUser();
   const [page, setPage] = useState("overview");
   const [hydrated, setHydrated] = useState(false);
+  const transactions = useStore(s => s.transactions);
+  const toast = useStore(s => s.toast);
+  const prevStatuses = useRef<Record<string, string>>({});
 
   // Rehydrate state on load
   useEffect(() => {
@@ -32,6 +35,24 @@ export default function App() {
       useStore.getState().initializeRealtimeSync();
     }
   }, [hydrated]);
+
+  // Notify the student the moment their own purchase gets approved/rejected
+  // by the Owner (works because Supabase Realtime resyncs `transactions`).
+  useEffect(() => {
+    if (!user || user.role !== "student") return;
+    for (const t of transactions) {
+      if (t.studentId !== user.id) continue;
+      const prev = prevStatuses.current[t.id];
+      if (prev && prev !== t.status) {
+        if (t.status === "completed") {
+          toast({ title: "✅ Xarid Tasdiqlandi!", desc: t.itemPurchased, tone: "success" });
+        } else if (t.status === "rejected") {
+          toast({ title: "❌ To'lov rad etildi", desc: t.itemPurchased, tone: "error" });
+        }
+      }
+      prevStatuses.current[t.id] = t.status;
+    }
+  }, [transactions, user, toast]);
 
   // Reset page when user changes
   useEffect(() => { setPage("overview"); }, [user?.id]);

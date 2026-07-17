@@ -118,7 +118,7 @@ interface State {
 
   // shop
   buyItem: (userId: string, itemId: string) => Promise<{ ok: boolean; msg?: string }>;
-  submitP2PTransaction: (userId: string, itemId: string, amount: number, senderName: string, receiptBase64: string) => Promise<void>;
+  submitP2PTransaction: (userId: string, itemId: string, amount: number, senderName: string, receiptBase64: string, subjectId?: string, stageId?: number) => Promise<void>;
   approveTransaction: (txId: string) => Promise<void>;
   rejectTransaction: (txId: string) => Promise<void>;
 
@@ -791,7 +791,7 @@ export const useStore = create<State>()(
         return { ok: true };
       },
 
-      submitP2PTransaction: async (userId, itemId, amount, senderName, receiptBase64) => {
+      submitP2PTransaction: async (userId, itemId, amount, senderName, receiptBase64, subjectId, stageId) => {
         const state = get();
         const user = state.users.find(u => u.id === userId);
         const item = state.shopItems.find(i => i.id === itemId);
@@ -804,6 +804,8 @@ export const useStore = create<State>()(
           amountPaid: amount,
           itemPurchased: item.name,
           itemId: item.id,
+          subjectId,
+          stageId,
           createdAt: Date.now(),
           status: "pending" as const,
           receiptImage: receiptBase64,
@@ -818,6 +820,9 @@ export const useStore = create<State>()(
               student_id: newTx.studentId,
               amount_paid: newTx.amountPaid,
               item_purchased: newTx.itemPurchased,
+              item_id: newTx.itemId,
+              subject_id: subjectId || null,
+              stage_id: stageId ?? null,
               created_at: new Date(newTx.createdAt).toISOString()
             });
         } catch (err) {
@@ -874,6 +879,12 @@ export const useStore = create<State>()(
           set(s => ({
             transactions: s.transactions.map(t => t.id === txId ? { ...t, status: "completed" as const } : t),
           }));
+        }
+
+        // "Unfreeze" boshqacha ishlaydi — u talaba ballariga emas, balki
+        // muzlatilgan bosqichni ochishga ta'sir qiladi.
+        if (tx.itemId === "unfreeze" && tx.subjectId && tx.stageId != null) {
+          await get().unfreezeStage(tx.studentId, tx.subjectId, tx.stageId);
         }
 
         get().log("PAY", `P2P Xarid TASDIQLANDI (Approve): ${tx.itemPurchased} -> ${tx.studentName}`);
